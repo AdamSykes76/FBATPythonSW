@@ -1,0 +1,278 @@
+import math
+
+very_small_number = 1.0e-6
+flag_censored = 1 << 18
+
+class Haplotype_List:
+    def __init__(self, n, h1=None, h2=None, nxt=None):
+        self.h = [[0] * n for _ in range(2)]
+        if h1 and h2:
+            for i in range(n):
+                self.h[0][i] = h1[i]
+                self.h[1][i] = h2[i]
+        self.nmrk = n
+        self.next = nxt
+        self.p = 0.0
+        self.q = 0.0
+
+    def equal(self, h1, h2):
+        for i in range(self.nmrk):
+            if self.h[0][i] != h1[i] or self.h[1][i] != h2[i]:
+                break
+        else:
+            return True
+
+        for i in range(self.nmrk):
+            if self.h[0][i] != h2[i] or self.h[1][i] != h1[i]:
+                break
+        else:
+            return True
+
+        return False
+
+    def find(self, h1, h2):
+        hl = self
+        while hl and not hl.equal(h1, h2):
+            hl = hl.next
+        return hl
+
+    def __del__(self):
+        for i in range(2):
+            if self.h[i]:
+                del self.h[i]
+        if self.next:
+            del self.next
+
+class Mating_Haplotype:
+    def __init__(self, n, h1=None, h2=None, nxt=None):
+        self.nmrks = n
+        self.h = [[0] * n for _ in range(4)]
+        if h1 and h2:
+            for i in range(2):
+                for j in range(n):
+                    self.h[i][j] = h1.h[i][j] if h1 else 0
+                    self.h[i + 2][j] = h2.h[i][j] if h2 else 0
+
+        self.hash_val = self.hash() if h1 and h2 else 0
+        self.pg = [0.0] * 4
+        self.pset = 0.0
+        self.frq = 0.0
+        self.hl = [None, None]
+        self.next = nxt
+
+    def hash(self):
+        a = [0] * 4
+        for i in range(4):
+            for j in range(self.nmrks):
+                k = self.h[i][j]
+                a[i] ^= (k << (j & 8))
+            a[i] &= 255
+
+        i = min(a[0], a[1])
+        j = min(a[2], a[3])
+        if i < j or (i == j and a[0] + a[1] < a[2] + a[3]):
+            k = i + ((a[0] + a[1] - i) << 8) + (j << 16) + ((a[2] + a[3] - j) << 24)
+        else:
+            k = j + ((a[2] + a[3] - j) << 8) + (i << 16) + ((a[0] + a[1] - i) << 24)
+
+        return k
+
+    def len(self):
+        i = 0
+        mh = self.next
+        while mh:
+            i += 1
+            mh = mh.next
+        return i + 1
+
+    def equal(self, mh):
+        if mh.hash_val != self.hash_val:
+            return False
+
+        if (
+            (self.h[0] == mh.h[0] and self.h[1] == mh.h[1]) or
+            (self.h[0] == mh.h[1] and self.h[1] == mh.h[0])
+        ) and (
+            (self.h[2] == mh.h[2] and self.h[3] == mh.h[3]) or
+            (self.h[2] == mh.h[3] and self.h[3] == mh.h[2])
+        ):
+            return True
+
+        if (
+            (self.h[0] == mh.h[2] and self.h[1] == mh.h[3]) or
+            (self.h[0] == mh.h[3] and self.h[1] == mh.h[2])
+        ) and (
+            (self.h[2] == mh.h[0] and self.h[3] == mh.h[1]) or
+            (self.h[2] == mh.h[1] and self.h[3] == mh.h[0])
+        ):
+            return True
+
+        return False
+
+    def n_heterozygotes(self):
+        n = 0
+        for i in range(0, 3, 2):
+            for j in range(self.nmrks):
+                if self.h[i][j] != self.h[i + 1][j]:
+                    break
+            else:
+                n += 1
+        return 2 - n
+
+    def __del__(self):
+        for i in range(4):
+            if self.h[i]:
+                del self.h[i]
+        if self.next:
+            del self.next
+
+    def gt_compatible(self, g):
+        for i in range(2):
+            for j in range(2, 4):
+                for k in range(self.nmrks):
+                    if g[k].a[0] != 0 and not g[k].equal(self.h[i][k], self.h[j][k]):
+                        break
+                else:
+                    return True
+        return False
+
+class Haploid:
+    def __init__(self, n, ht, f):
+        self.h = None
+        if n < 1:
+            self.nmrk = 0
+        else:
+            self.h = [ht[i] for i in range(n)]
+            self.nmrk = n
+
+        self.p = f
+        self.q = 0
+
+    def equal(self, ht):
+        for i in range(self.nmrk):
+            if self.h[i] != ht[i]:
+                return False
+        return True
+
+class HaploidTable:
+    def __init__(self):
+        self.size = 0
+        self.hpl = None
+
+    def maketable(self, hl):
+        minp = 0.0001
+        if not hl:
+            return
+
+        self.size = 0
+        hpl2 = hl
+        while hpl2:
+            if hpl2.p >= minp:
+                for i in range(2):
+                    if hpl2.h[i][0] > 0:
+                        hld = self.find(hpl2.h[i])
+                        if not hld:
+                            if not self.hpl:
+                                self.hpl = HaploidList(Haploid(hpl2.nmrk, hpl2.h[i], hpl2.p / 2), self.hpl)
+                            else:
+                                self.hpl = HaploidList(Haploid(hpl2.nmrk, hpl2.h[i], hpl2.p / 2), self.hpl)
+                            self.size += 1
+                        else:
+                            hld.p += hpl2.p / 2
+            hpl2 = hpl2.next
+
+        hpl1 = self.hpl
+        if not hpl1 or not hpl1.next:
+            return
+
+        maxh = hpl1
+        maxp = hpl1.node.p
+        hpl2 = hpl1.next
+        while hpl2:
+            if hpl2.node.p > maxp:
+                maxp = hpl2.node.p
+                maxh = hpl2
+            hpl2 = hpl2.next
+
+        if maxh != hpl1:
+            hld = hpl1.node
+            hpl1.node = maxh.node
+            maxh.node = hld
+
+        sum_p = sum([hpl1.node.p for hpl1 in self.hpl])
+        for hpl1 in self.hpl:
+            hpl1.node.p /= sum_p
+
+    def find(self, h):
+        hpl2 = self.hpl
+        while hpl2:
+            if hpl2.node and hpl2.node.equal(h):
+                break
+            hpl2 = hpl2.next
+        return hpl2.node if hpl2 else None
+
+    def allele(self, h):
+        hpl2 = self.hpl
+        i = 1
+        while hpl2:
+            if hpl2.node and hpl2.node.equal(h):
+                break
+            hpl2 = hpl2.next
+            i += 1
+        return i if hpl2 else 0
+
+    def gid(self, hl):
+        if not hl or not hl.h[0] or not hl.h[1]:
+            return -1
+
+        a = [self.allele(hl.h[i]) for i in range(2)]
+        return -2 if not all(a) else (a[1] - 1) * a[1] // 2 + a[0] - 1 if a[0] <= a[1] else (a[0] - 1) * a[0] // 2 + a[1] - 1
+
+    def dprime(self):
+        if not self.hpl or not self.hpl.node:
+            return
+
+        kmaxallele = 20
+        epsilon = very_small_number
+
+        hl = self.hpl
+        while hl and hl.next:
+            hl = hl.next
+
+        if self.size > kmaxallele:
+            return
+
+        sum_p = sum([hl.p for hl in self.hpl])
+        for hl in self.hpl:
+            hl.q = hl.p / sum_p
+
+        x = [[0] * self.size for _ in range(self.size)]
+        for i in range(self.size):
+            for j in range(i, self.size):
+                if i == j:
+                    x[i][j] = self.hpl.p * (self.hpl.p - 1)
+                else:
+                    x[i][j] = 2.0 * self.hpl.p * self.hpl.q
+
+        for hl in self.hpl:
+            self.hpl.q = hl.q
+
+        x11 = x[0][0]
+        x12 = sum([x[0][j] for j in range(1, self.size)])
+        x21 = sum([x[i][0] for i in range(1, self.size)])
+        x22 = sum([x[i][j] for i in range(1, self.size) for j in range(1, self.size)])
+
+        if x11 < epsilon or x12 < epsilon or x21 < epsilon or x22 < epsilon:
+            return
+
+        y1 = x11 * x22 - x12 * x21
+        y2 = x12 + x22
+        y3 = x11 + x21
+        y4 = x11 + x12
+        y5 = x21 + x22
+        self.dp = y1 * y1 / y2 / y3 / y4 / y5
+
+class HaploidList:
+    def __init__(self, node, nxt=None):
+        self.node = node
+        self.next = nxt
