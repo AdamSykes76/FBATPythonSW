@@ -105,7 +105,7 @@ class HaploidTable:
         while hl2 is not None:
             if hl2.p >= minp:
                 for i in range(2):
-                    if hl2.h[i][0] > 0:  # not missing as in male x-linked markers
+                    if hl2.h[i][0] > 0:  
                         hld = self.find(hl2.h[i])
                         if hld is None:
                             if self.hpl is None:
@@ -287,4 +287,231 @@ class MatingHaplotype:
 
 
 
-# Class defining 
+# Class defining Mating_mm_genotype
+
+class MatingMMGenotype:
+    def __init__(self, nmrk, mg, sexlink):
+        self.nMarkers = nmrk
+        self.xlink = sexlink
+        
+        self.gt = [None, None]
+        self.seg = [None, None]
+        
+        for i in range(2):
+            self.gt[i] = mg[i]
+            self.seg[i] = [0] * self.nMarkers
+            for j in range(self.nMarkers):
+                self.seg[i][j] = 1 if self.gt[i][j].homozygote() else 0  # 1 = homozygote parent
+        
+        self.next = None
+
+    def og_by_origin_order(self, pg1, pg2, og):
+        if og.a[0] == 0:
+            return False
+        
+        if og.homozygote():
+            return True
+        
+        if og.equal(pg1) and og.equal(pg2):
+            return False
+        
+        j = -1  # og.a[j] from pg1
+        for i in range(2):
+            if pg1.a[0] != og.a[i] and pg1.a[1] != og.a[i]:
+                j = 1 - i
+                break
+            elif pg2.a[0] != og.a[i] and pg2.a[1] != og.a[i]:
+                j = i
+                break
+        
+        if j == 1:
+            og.swap()
+        
+        return j >= 0
+
+    def resolve(self, noffs, ogt):
+        if self.nMarkers < 2:
+            return True
+        
+        oried = [False] * self.nMarkers
+        for i in range(noffs):
+            for j in range(self.nMarkers):
+                oried[j] = self.og_by_origin_order(self.gt[0][j], self.gt[1][j], ogt[i][j])
+            for k in range(2):
+                for j in range(self.nMarkers):
+                    if oried[j] and self.seg[k][j] != 1:  # informative heterozygotes
+                        phase = 0 if self.gt[k][j].a[0] == ogt[i][j].a[k] else 1
+                        if self.seg[k][j] > 1 and self.seg[k][j] != i + 2:  # has overlap of heterozygote hap fragment
+                            p = self.seg[k][j]
+                            for l in range(self.nMarkers):  # combine overlapped hap
+                                if self.seg[k][l] == p:
+                                    if oried[l] and ogt[i][l].a[k] != self.gt[k][l].a[phase]:  # crossover
+                                        return False
+                                    if phase == 1:
+                                        self.gt[k][l].swap()
+                                    self.seg[k][l] = i + 2
+                        else:
+                            if phase == 1:
+                                self.gt[k][j].swap()
+                            self.seg[k][j] = i + 2
+        
+        # Sorting seg numbers, start from 1001 - an arbitrary big number
+        for k in range(2):
+            for p in range(1001, 1001 + self.nMarkers):
+                for i in range(self.nMarkers):
+                    if self.seg[k][i] > 1 and self.seg[k][i] < 1000:
+                        for l, j in enumerate(self.seg[k]):
+                            if j == self.seg[k][i]:
+                                self.seg[k][l] = p
+                        p += 1
+        
+        # Bring seg number back starting at 2 for #>1000 (2=1001, 3=1002, etc)
+        for k in range(2):
+            for i in range(self.nMarkers):
+                if self.seg[k][i] > 1000:
+                    self.seg[k][i] -= 999
+        
+        return True
+
+    def resolve_x(self, noffs, ogt, sex):
+        if self.nMarkers < 2:
+            return True
+        
+        for k in range(noffs):
+            if sex[k] == 2:  # phase ogt[] first
+                for i in range(self.nMarkers):
+                    if self.gt[0][i].a[0] == ogt[k][i].a[0]:  # here ogt[k][i].a[0] is maternal alleles
+                        ogt[k][i].swap()
+            for i in range(self.nMarkers):
+                if self.seg[1][i] != 1 and self.seg[1][i] != k + 2 and ogt[k][i].a[0] > 0:  # heterozygotes
+                    phase = 0 if self.gt[1][i].a[0] == ogt[k][i].a[0] else 1
+                    if self.seg[1][i] > 1 and self.seg[1][i] != k + 2:  # has overlap of heterozygote hap fragment
+                        j = self.seg[1][i]
+                        for l in range(self.nMarkers):  # check consistence of overlapped seg[1] and merge into one segment
+                            if self.seg[1][l] == j:
+                                if ogt[k][l].a[0] > 0 and self.gt[1][l].a[phase] != ogt[k][l].a[0]:  # inconsistency overlap or crossover happened
+                                    return False
+                                if phase == 1:
+                                    self.gt[1][l].swap()
+                                self.seg[1][l] = k + 2
+                    else:
+                        if phase == 1:
+                            self.gt[1][i].swap()
+                        self.seg[1][i] = k + 2
+        
+        # Sorting seg[1] numbers, start from 1001 - an arbitrary big number
+        for p in range(1001, 1001 + self.nMarkers):
+            for i in range(self.nMarkers):
+                if self.seg[1][i] > 1 and self.seg[1][i] < 1000:
+                    for l, j in enumerate(self.seg[1]):
+                        if j == self.seg[1][i]:
+                            self.seg[1][l] = p
+                    p += 1
+        
+        # Bring seg[1] number back starting at 2 for #>1000 (2=1001, 3=1002, etc)
+        for i in range(self.nMarkers):
+            if self.seg[1][i] > 1000:
+                self.seg[1][i] -= 999
+        
+        return True
+
+    def enumerate_parent_haplotype(self, father):
+        kMaxSeg = 15
+        
+        if father and self.xlink:  # gt[0] already phased
+            hl = HaplotypeList(self.nMarkers)
+            for i in range(self.nMarkers):
+                hl.h[0][i] = self.gt[0][i].a[0]
+                hl.h[1][i] = 0
+            return hl
+        
+        if self.nMarkers == 1:  # no need to phase
+            hl = HaplotypeList(self.nMarkers)
+            hl.h[0][0] = self.gt[0 if father else 1][0].a[0]
+            hl.h[1][0] = self.gt[0 if father else 1][0].a[1]
+            return hl
+        
+        genotype = self.gt[0] if father else self.gt[1]
+        segment = self.seg[0] if father else self.seg[1]
+        
+        nseg = sum(1 for i in range(self.nMarkers) if segment[i] == 0)
+        maxseg_id = max(segment)
+        nseg += maxseg_id - 1
+        
+        if nseg > kMaxSeg:
+            return None
+        
+        first_het_seg = next(i for i in range(self.nMarkers) if segment[i] == 0)
+        segid_off = 3 if first_het_seg < self.nMarkers and segment[first_het_seg] > 0 else 2
+        
+        old_hl = None
+        if nseg > 1:
+            for k in range(1 << (nseg - 1)):
+                hl = HaplotypeList(self.nMarkers)
+                for i in range(first_het_seg):
+                    hl.h[0][i] = genotype[i].a[0]
+                    hl.h[1][i] = genotype[i].a[1]
+                for j in range(maxseg_id - segid_off + 1, nseg):
+                    l = (k & (1 << j)) if segment[i] == 0 else (k & (1 << (segment[i] - segid_off)))
+                    hl.h[0][i] = genotype[i].a[l]
+                    hl.h[1][i] = genotype[i].a[1 - l]
+                hl.next = old_hl
+                old_hl = hl
+        else:
+            old_hl = HaplotypeList(self.nMarkers)
+            for i in range(self.nMarkers):
+                for j in range(2):
+                    old_hl.h[j][i] = genotype[i].a[j]
+        
+        return old_hl
+
+    def compatible_mating_haplotype(self, h1, h2, ogt, sex):
+        if h1 is None or h2 is None or ogt is None:
+            return False
+        
+        if self.xlink and sex == 1:
+            for j in range(2):
+                if all(ogt[k].a[0] == 0 or ogt[k].a[0] == h2.h[j][k] for k in range(self.nMarkers)):
+                    return True
+        else:
+            for i in range(1 if self.xlink else 2):
+                for j in range(2):
+                    if all(ogt[k].a[0] == 0 or ogt[k].equal(h1.h[i][k], h2.h[j][k]) for k in range(self.nMarkers)):
+                        return True
+        
+        return False
+
+    def enumerate_mating_haplo(self, noffs, ogt, sex, maxmh):
+        hl = [self.enumerate_parent_haplotype(True), None]
+        
+        identical_pgt = not self.xlink and all(self.gt[0][i].equal(self.gt[1][i]) for i in range(self.nMarkers))
+        hl[1] = hl[0] if identical_pgt else self.enumerate_parent_haplotype(False)
+        
+        mh = None
+        m = 0
+        for h1 in iter(hl[0]):
+            for h2 in iter(hl[1] if not identical_pgt else h1):
+                if all(self.compatible_mating_haplotype(h1, h2, ogt[i], sex[i]) for i in range(noffs)):
+                    mh = MatingHaplotype(self.nMarkers, h1, h2, mh)
+                    m += 1
+                    if maxmh > 0 and m >= maxmh:
+                        break
+        
+        for hl_item in hl:
+            if hl_item:
+                del hl_item
+        
+        return mh
+
+    def __del__(self):
+        for i in range(2):
+            if self.seg[i]:
+                del self.seg[i]
+            if self.gt[i]:
+                del self.gt[i]
+        
+        if self.next:
+            del self.next
+
+
+# 
