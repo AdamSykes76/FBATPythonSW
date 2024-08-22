@@ -514,4 +514,30 @@ class MatingMMGenotype:
             del self.next
 
 
-# 
+# defining class OFfGenotypePattern
+
+class OffGenotypePattern:
+    def __init__(self, count, p, nxt=None):
+        self.cnt = count  # cnt[i] = count of offspring with genotype=common_ogt[i]
+        self.pg = p
+        self.next = nxt
+
+    def __del__(self):
+        if self.next:
+            del self.next
+
+    def print(self):
+        print(f"{self.cnt[0]}\t{self.cnt[1]}\t{self.cnt[2]}\t{self.cnt[3]}\t{self.pg}\t{self.permut_n()}")
+
+    def sum_log_tao(self, n):
+        # Function logic needs to be implemented
+        pass
+
+    def permut_n(self):
+        # Function logic needs to be implemented
+        pass
+
+    def permut_n_x(self, sex):
+        # Function logic needs to be implemented
+        pass
+
