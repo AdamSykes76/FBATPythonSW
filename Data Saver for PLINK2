@@ -1,0 +1,6 @@
+def save_pvar(self):
+    """Save data into a csv file, can be modified into any other form of saving required by sufficient stat"""
+    pvar_data = self.read_pvar()
+    pvar_path = os.path.join(self.output_dir, "pvar_data.csv")
+    pvar_data.to_csv(pvar_path, index=False)
+    print(f"Saved pvar data to {pvar_path}")
