@@ -1,0 +1,55 @@
+import numpy as np
+import pandas as pd
+import pgenlib as pg
+
+class PlinkReader:
+    def __init__(self, pgen_path=None, pvar_path=None, psam_path=None, fam_path=None):
+        self.pgen_path = pgen_path
+        self.pvar_path = pvar_path
+        self.psam_path = psam_path
+        self.fam_path = fam_path
+        
+        # Initialize reader if pgen file provided
+        if self.pgen_path:
+            self.reader = self.get_reader()
+
+    def read_pvar(self):
+        """Read pvar file """
+        return pd.read_csv(self.pvar_path, sep='\t', comment='#',
+                           names=['chrom', 'pos', 'id', 'ref', 'alt', 'qual', 'filter', 'info'])
+
+    def read_psam(self):
+        """Read psam file"""
+        return pd.read_csv(self.psam_path, sep='\t', names=['fid', 'iid', 'father', 'mother', 'sex', 'phenotype'])
+
+    def read_fam(self):
+        """Read fam file"""
+        return pd.read_csv(self.fam_path, sep=' ', names=['fid', 'iid', 'father', 'mother', 'sex', 'phenotype'])
+
+    def get_reader(self):
+        """PGen REader"""
+        return pg.PgenReader(self.pgen_path)
+
+    def read_dosages(self, variant_idx):
+        """Read dosgae data."""
+        dosages = np.empty(self.reader.get_num_samples())
+        self.reader.read_dosages(variant_idx, dosages)
+        return dosages
+
+    def read_alleles(self, variant_idx):
+        """Read alleles data"""
+        alleles = np.empty(self.reader.get_num_samples(), dtype=np.int32)
+        self.reader.read_alleles(variant_idx, alleles)
+        return alleles
+
+    def read_region(self, chrom, start, end):
+        """Select region """
+        variants = self.read_pvar()
+        region_variants = variants[(variants['chrom'] == chrom) & (variants['pos'] >= start) & (variants['pos'] <= end)]
+        return region_variants
+
+# Example of usage:
+# reader = PlinkReader(pgen_path="path_to_pgen_file", pvar_path="path_to_pvar_file", psam_path="path_to_psam_file")
+# dosages = reader.read_dosages(variant_idx=0)
+# alleles = reader.read_alleles(variant_idx=0)
+
