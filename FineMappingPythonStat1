@@ -1,0 +1,294 @@
+# void controller::initialize(ColumnVector &Zp, Matrix &Rp, int n_var_p, map<int, string> geno_map_p){   in Python - made a commend bellow but it's missing some definitions of functions that I have no idea how to fix
+
+import numpy as np
+
+class Controller:
+    def __init__(self):
+        self.n_var = 0
+        self.Z = None
+        self.R = None
+        self.geno_map = {}
+
+    def initialize(self, Zp, Rp, n_var_p, geno_map_p):
+        self.set_default_grid()
+        self.n_var = n_var_p
+
+        self.set_default_options()
+
+       
+        self.Z = np.zeros((self.n_var, 1))
+        self.R = np.zeros((self.n_var, self.n_var))
+
+   
+        for i in range(self.n_var):
+            self.Z[i, 0] = Zp[i]
+            for j in range(self.n_var):
+                self.R[i, j] = Rp[i, j]
+
+        prior = 1.0 / float(self.n_var)
+        self.set_prior(prior)
+
+        self.geno_map = geno_map_p
+
+        self.init()
+
+# you will have to define set_default_grid, set_default_options, set_prior, and init, functions for code to work, but I'm unsure of how you would define them
+
+
+# con.fine_map(); function  in Python
+
+    def fine_map(self):
+        i = 0
+        self.init()
+
+        # initialize snp2cluster_map
+        snp2cluster_map = [-1] * self.n_var
+
+        log10_pmass_vec = []
+
+        curr_val = self.compute_log10_prior(self.null_config)
+        log10_pmass_vec.append(curr_val)
+
+        bm = []
+        self.szm_vec.append(self.compute_post_model_single(bm))
+        log10_pmass_vec.append(self.szm_vec[0].log10_sum_post)
+
+        wv = [1.0] * len(log10_pmass_vec)
+        val = self.log10_weighted_sum(log10_pmass_vec, wv)
+        total_snp = len(self.szm_vec[0].mvec)
+
+        prev_val = val
+        size = 1
+        no_bc = 0
+        increment = 0
+
+        while True:
+            if len(bm) == self.max_size:
+                break
+
+            log10_post = self.conditional_est(bm)
+
+            if size == len(bm):
+                break
+            else:
+                size += 1
+
+            elim_index = -1
+            if size >= 3 and not no_bc:
+                elim_index = self.backward_checking(bm, log10_post)
+                if elim_index != -1:
+                    size -= 1
+
+            szm = self.size_model()
+
+            cps = self.szm_vec[-1].log10_sum_post
+            if elim_index != -1:
+                black_list = {}
+                for snp in self.szm_vec[elim_index].snp_cluster:
+                    black_list[snp] = 100
+
+                szm = self.append_post_model(size, black_list)
+                szm.snp_cluster = self.cand_set
+                self.szm_vec.append(szm)
+                for snp in self.cand_set:
+                    snp2cluster_map[snp] = len(self.szm_vec)
+
+                log10_pmass_vec.append(szm.log10_sum_post)
+
+                nwv = [1.0] * len(log10_pmass_vec)
+                val = self.log10_weighted_sum(log10_pmass_vec, nwv)
+                total_snp += len(self.cand_set)
+
+                # stop continuous backward checking for tiny improvement
+                if val - prev_val < self.size_select_thresh:
+                    no_bc = 1
+            else:
+                if no_bc:
+                    no_bc = 0
+
+                use_abs_cutoff = 0
+                if increment > 1 or size == 2:
+                    use_abs_cutoff = 1
+
+                szm = self.compute_post_model(size, use_abs_cutoff)
+                szm.snp_cluster = self.cand_set
+                self.szm_vec.append(szm)
+                for snp in self.cand_set:
+                    snp2cluster_map[snp] = len(self.szm_vec)
+
+                log10_pmass_vec.append(szm.log10_sum_post)
+
+                nwv = [1.0] * len(log10_pmass_vec)
+                val = self.log10_weighted_sum(log10_pmass_vec, nwv)
+                total_snp += len(self.cand_set)
+
+            cs = size
+
+            
+            project_ratio = (self.n_var - cs + 1) * self.prior_ratio / cs
+            if project_ratio > 1:
+                increment = val - prev_val
+                prev_val = val
+                continue
+
+            
+            ncps = szm.log10_sum_post
+            rb = math.log10(float(self.n_var) - cs + 1) + math.log10(self.prior_ratio) + cps
+            lb = math.log10(float(self.n_var - 2 * cs + 2) / cs) + math.log10(self.prior_ratio) + cps
+            if ncps <= rb and val - prev_val <= self.size_select_thresh:
+                break
+
+            increment = val - prev_val
+            prev_val = val
+
+# everything called should be accounted for? 
+
+# finemap_results fr=con.summarize_approx_posterior(verbose);   - sumamry stat of fine map - some of the same holes in this new code as the initial - some def needs defiend
+
+import math
+from collections import defaultdict
+
+class FinemapResults:
+    def __init__(self):
+        self.variant_names = []
+        self.incl_probs = []
+        self.log_bfs = []
+        self.z_scores = []
+        self.cluster_ids = []
+        self.cluster_counts = []
+        self.cluster_pips = []
+        self.cluster_r2s = []
+
+def log10_weighted_sum(log10_pmass_vec, wv):
+    max_val = max(log10_pmass_vec)
+    sum_val = sum([w * math.pow(10, pmass - max_val) for w, pmass in zip(wv, log10_pmass_vec)])
+    return max_val + math.log10(sum_val)
+
+def compute_average_r2(members):
+    # Dummy implementation for the average R2 computation
+    return sum(members) / len(members) if members else 0
+
+def sort_nmodel_dec(nmodel):
+    # Sorting function for models
+    return sorted(nmodel, key=lambda nm: nm['prob'], reverse=True)
+
+def summarize_approx_posterior(verbose=False):
+    log10_pmass_vec = []
+    log10_pmass_vec.append(compute_log10_prior(null_config))
+
+    for szm in szm_vec:
+        log10_pmass_vec.append(szm.log10_sum_post)
+
+    wv1 = [1.0] * len(log10_pmass_vec)
+    log10_pip_NC = log10_weighted_sum(log10_pmass_vec, wv1)
+
+    val = log10_pmass_vec[-1]
+    sum_val = 0
+    ratio = 1
+    max_model_size = szm_vec[-1].size
+
+    if max_size == n_var:
+        for k in range(max_model_size + 1, n_var + 1):
+            ratio *= (n_var - k + 1) * prior_ratio / k
+            sum_val += ratio
+
+        log10_pmass_vec.append(val + math.log10(sum_val))
+
+    wv = [1.0] * len(log10_pmass_vec)
+    log10_pnorm = log10_weighted_sum(log10_pmass_vec, wv)
+
+    nmodel_vec = []
+    nm = {'id': "NULL", 'prob': math.pow(10, log10_pmass_vec[0] - log10_pnorm), 'size': 0, 'post_score': log10_pmass_vec[0]}
+    nmodel_vec.append(nm)
+
+    null_prob = nm['prob']
+
+    for szm in szm_vec:
+        for model_id, post_score in szm.post_map.items():
+            nm = {'id': model_id, 'post_score': post_score, 'prob': math.pow(10, post_score - log10_pnorm), 'size': szm.size}
+            nmodel_vec.append(nm)
+
+    nmodel_vec = sort_nmodel_dec(nmodel_vec)
+    cump = 0
+    msize_mean = 0
+    msize_var = 0
+
+    for nm in nmodel_vec:
+        cump += nm['prob']
+        msize_mean += nm['prob'] * nm['size']
+        msize_var += nm['prob'] * math.pow(nm['size'], 2)
+
+    msize_var -= math.pow(msize_mean, 2.0)
+    msize_var = max(msize_var, 0)
+
+    nsnp_vec_sort = sorted(nsnp_vec, key=lambda nsnp: nsnp['incl_prob'], reverse=True)
+    snp2index = {nsnp['name']: i for i, nsnp in enumerate(nsnp_vec_sort)}
+    
+    min_pip = (1 - null_prob) * prior_ratio / math.sqrt(1000)  # Arbitrary NN = 1000 as in C++ code
+
+    cluster_pip = []
+    cluster_r2 = []
+    cluster_count = []
+    cluster_id = []
+    grp_vec = []
+    grpr2_map = {}
+    cluster_index = 1
+
+    for szm in szm_vec:
+        cluster_prob = 0
+        member_vec = []
+
+        for snp in szm.snp_cluster:
+            sname = geno_map[snp]
+            if sname not in snp2index:
+                continue
+            index = snp2index[sname]
+            prob = nsnp_vec_sort[index]['incl_prob']
+
+            if prob > min_pip:
+                member_vec.append(snp)
+                cluster_prob += prob
+                nsnp_vec_sort[index]['cluster'] = cluster_index
+
+        if member_vec:
+            cluster_r2.append(compute_average_r2(member_vec))
+            cluster_count.append(len(member_vec))
+            cluster_pip.append(cluster_prob)
+            cluster_id.append(cluster_index)
+
+            if cluster_prob >= cluster_pip_thresh:
+                grp_vec.append(member_vec)
+                grpr2_map[len(cluster_count) - 1] = len(grp_vec) - 1
+
+            cluster_index += 1
+
+    fr = FinemapResults()
+
+    for nsnp in nsnp_vec_sort:
+        if nsnp['incl_prob'] < min_pip:
+            nsnp['incl_prob'] = min_pip
+
+        if nsnp['cluster'] == -1 and not verbose:
+            continue
+
+        fr.variant_names.append(nsnp['name'])
+        fr.incl_probs.append(nsnp['incl_prob'])
+        fr.log_bfs.append(single_log10_abfv[nsnp['name']])
+        fr.z_scores.append(single_z_score[nsnp['name']])
+        fr.cluster_ids.append(nsnp['cluster'])
+
+    if grp_vec:
+        for i in range(len(cluster_count)):
+            if cluster_pip[i] < cluster_pip_thresh:
+                continue
+            fr.cluster_counts.append(cluster_count[i])
+            fr.cluster_pips.append(cluster_pip[i])
+            fr.cluster_r2s.append(cluster_r2[i])
+
+    return fr
+
+
+
+
+
+
